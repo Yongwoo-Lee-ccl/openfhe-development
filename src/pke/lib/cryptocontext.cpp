@@ -270,6 +270,10 @@ void CryptoContextImpl<Element>::ConjugateKeyGen(const PrivateKey<Element> priva
     privateKeyPermuted->SetKeyTag(privateKey->GetKeyTag());
 
     EvalKey<Element> conjKey = algo->KeySwitchGen(privateKey, privateKeyPermuted);
+    if (CryptoContextImpl<Element>::s_evalAutomorphismKeyMap.find(privateKey->GetKeyTag()) 
+        == CryptoContextImpl<Element>::s_evalAutomorphismKeyMap.end()) {
+        CryptoContextImpl<Element>::s_evalAutomorphismKeyMap[privateKey->GetKeyTag()] = std::make_shared<std::map<usint, EvalKey<Element>>>();
+    }
     (*CryptoContextImpl<Element>::s_evalAutomorphismKeyMap[privateKey->GetKeyTag()])[2*N  - 1] = conjKey;
 }
 

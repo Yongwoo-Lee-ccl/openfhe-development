@@ -279,6 +279,7 @@ void EvalLUTs2D(Ciphertext<DCRTPoly> &ct0, Ciphertext<DCRTPoly> &ct1,
     std::vector<Ciphertext<DCRTPoly>> b0(codedim - 1);
     std::vector<Ciphertext<DCRTPoly>> b1(codedim - 1);
 
+
     // find power basis
     b0[0] = ct0, b1[0] = ct1;
     for (size_t i = 2; i < codedim; i++){
@@ -293,6 +294,32 @@ void EvalLUTs2D(Ciphertext<DCRTPoly> &ct0, Ciphertext<DCRTPoly> &ct1,
         algo->AdjustLevelsAndDepthInPlace(b0[i], b0[codedim-2]);
         algo->AdjustLevelsAndDepthInPlace(b1[i], b1[codedim-2]);
     }
+
+    // find power basis
+    // b0[0] = ct0, b1[0] = ct1;
+    // for (size_t i = 2; i <= codedim/2; i++){
+    //     auto i0 = i/2;
+    //     auto i1 = i - i0;
+    //     b0[i - 1] = cc->EvalMult(b0[i0 - 1], b0[i1 - 1]);
+    //     b1[i - 1] = cc->EvalMult(b1[i0 - 1], b1[i1 - 1]);
+    // }
+
+    // // match the level and depth
+    // for (size_t i = 0; i < codedim/2 - 1; i++){ 
+    //     algo->AdjustLevelsAndDepthInPlace(b0[i], b0[codedim/2 - 1]);
+    //     algo->AdjustLevelsAndDepthInPlace(b1[i], b1[codedim/2 - 1]);
+    // }
+
+    // for (size_t i = codedim/2 + 1; i < codedim; i++){
+    //     auto i0 = codedim - i;
+
+    //     b0[i - 1] = cc->EvalConjugate(b0[i0 - 1]);
+    //     b1[i - 1] = cc->EvalConjugate(b1[i0 - 1]);
+    // }
+
+    // for (auto &ct : b0){
+    //     std::cout << "Level: " <<  ct->GetLevel() << std::endl;
+    // }
 
     // evaluate the polynomial
     for (auto &table : coeffs){
@@ -566,12 +593,14 @@ void testLUTANtoBN(){
 
     auto keys = cc->KeyGen();
     cc->EvalMultKeyGen(keys.secretKey);
+    cc->EvalConjugateKeyGen(keys.secretKey);
 
     Plaintext ptxt0 = cc->MakeCKKSPackedPlaintext(mComplex0);
     Plaintext ptxt1 = cc->MakeCKKSPackedPlaintext(mComplex1);
     Ciphertext<DCRTPoly> ctxt0 = cc->Encrypt(keys.publicKey, ptxt0);
     Ciphertext<DCRTPoly> ctxt1 = cc->Encrypt(keys.publicKey, ptxt1);
     std::vector<Ciphertext<DCRTPoly>> ctxtout;
+
     // Evaluate the LUT and measure the time
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -579,8 +608,10 @@ void testLUTANtoBN(){
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-
     std::cout << "Time taken: " << duration.count() << "ms" << std::endl;
+
+    std::cout << "Ct level after: " << ctxtout[0]->GetLevel() << "/" << parameters.GetMultiplicativeDepth() << std::endl;
+
 
     std::vector<Plaintext> result(outB);
     for (size_t i = 0; i < outB; i++){
