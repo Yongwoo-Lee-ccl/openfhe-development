@@ -2042,6 +2042,23 @@ public:
         return GetScheme()->EvalAtIndex(ciphertext, index, evalKeyMap);
     }
 
+    Ciphertext<Element> Conjugate(ConstCiphertext<Element> ciphertext,
+                            const std::map<usint, EvalKey<Element>>& evalKeys) const;
+
+     /**
+   * Conjugate a ciphertext.
+   * Uses a conjugate key stored in a crypto context.
+   * Calls Conjugate under the hood.
+   * @param ciphertext input ciphertext
+   * @return a conjugated ciphertext
+   */
+    Ciphertext<Element> EvalConjugate(ConstCiphertext<Element> ciphertext) const {
+        ValidateCiphertext(ciphertext);
+
+        auto evalKeyMap = CryptoContextImpl<Element>::GetEvalAutomorphismKeyMap(ciphertext->GetKeyTag());
+        return Conjugate(ciphertext, evalKeyMap);
+    }
+
     /**
    * EvalFastRotationPrecompute implements the precomputation step of
    * hoisted automorphisms.
@@ -2214,6 +2231,26 @@ public:
    * @return a rotated ciphertext
    */
     Ciphertext<Element> EvalAtIndex(ConstCiphertext<Element> ciphertext, int32_t index) const;
+    
+
+    /**
+   * ConjugateKeyGen generates evaluation keys for complex conjugation for CKKS scheme.
+   *
+   * @param privateKey private key.
+   */
+    void ConjugateKeyGen(const PrivateKey<Element> privateKey);
+
+    /**
+   * EvalConjugateKeyGen generates evaluation keys for complex conjugation for CKKS scheme.
+   * Calls ConjugateKeyGen under the hood.
+   *
+   * @param privateKey private key.
+   */
+    void EvalConjugateKeyGen(const PrivateKey<Element> privateKey) {
+        VerifyCKKSScheme(__func__);
+
+        ConjugateKeyGen(privateKey);
+    };
 
     //------------------------------------------------------------------------------
     // SHE Leveled Methods Wrapper

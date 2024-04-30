@@ -251,6 +251,52 @@ void CryptoContextImpl<Element>::EvalAtIndexKeyGen(const PrivateKey<Element> pri
 }
 
 template <typename Element>
+void CryptoContextImpl<Element>::ConjugateKeyGen(const PrivateKey<Element> privateKey) {
+    const auto cc = privateKey->GetCryptoContext();
+    auto algo     = cc->GetScheme();
+
+    const Element& s = privateKey->GetPrivateElement();
+    usint N           = s.GetRingDimension();
+
+    PrivateKey<Element> privateKeyPermuted = std::make_shared<PrivateKeyImpl<Element>>(cc);
+
+    usint index = 2 * N - 1;
+    std::vector<usint> vec(N);
+    PrecomputeAutoMap(N, index, &vec);
+
+    Element sPermuted = s.AutomorphismTransform(index, vec);
+
+    privateKeyPermuted->SetPrivateElement(sPermuted);
+    privateKeyPermuted->SetKeyTag(privateKey->GetKeyTag());
+
+    EvalKey<Element> conjKey = algo->KeySwitchGen(privateKey, privateKeyPermuted);
+    (*CryptoContextImpl<Element>::s_evalAutomorphismKeyMap[privateKey->GetKeyTag()])[2*N  - 1] = conjKey;
+}
+
+template <typename Element>
+Ciphertext<Element> CryptoContextImpl<Element>::Conjugate(ConstCiphertext<Element> ciphertext,
+                                           const std::map<usint, EvalKey<Element>>& evalKeyMap) const {
+    const std::vector<Element>& cv = ciphertext->GetElements();
+    usint N                         = cv[0].GetRingDimension();
+
+    std::vector<usint> vec(N);
+    PrecomputeAutoMap(N, 2 * N - 1, &vec);
+
+    auto algo = ciphertext->GetCryptoContext()->GetScheme();
+
+    Ciphertext<Element> result = ciphertext->Clone();
+
+    algo->KeySwitchInPlace(result, evalKeyMap.at(2 * N - 1));
+
+    std::vector<Element>& rcv = result->GetElements();
+
+    rcv[0] = rcv[0].AutomorphismTransform(2 * N - 1, vec);
+    rcv[1] = rcv[1].AutomorphismTransform(2 * N - 1, vec);
+
+    return result;
+}
+
+template <typename Element>
 void CryptoContextImpl<Element>::ClearEvalAutomorphismKeys() {
     CryptoContextImpl<Element>::s_evalAutomorphismKeyMap.clear();
 }

@@ -71,6 +71,7 @@ int main() {
     // testLUTNtoN();
     // testLUTNtoBN();
     testLUTANtoBN();
+    // testComplexOperation();
     return 0;
 }
 
@@ -621,7 +622,7 @@ void testComplexOperation(){
     std::vector<uint32_t> mInt = {0,1,2,3,4,5,6,7};
     std::vector<std::complex<double>> mComplex;
     GetExponent(mInt, 3, mComplex);
-    std::complex<double> c(1,2);
+    // std::complex<double> c(1,2);
 
     // Create the crypto context
     uint32_t multDepth = 1;
@@ -638,19 +639,23 @@ void testComplexOperation(){
 
     auto keys = cc->KeyGen();
     cc->EvalMultKeyGen(keys.secretKey);
+    cc->EvalRotateKeyGen(keys.secretKey, {1});
+    cc->EvalConjugateKeyGen(keys.secretKey);
 
     // encrypt mInt
     Plaintext ptxt1 = cc->MakeCKKSPackedPlaintext(mComplex);
     Ciphertext<DCRTPoly> ctxt1 = cc->Encrypt(keys.publicKey, ptxt1);
 
-    auto ctxt2 = EvalAddComplex(ctxt1, c);
+    {
+        std::cout << "Original\tConjugated" << std::endl;
+        auto ctxt2 = cc->EvalConjugate(ctxt1);
+        // Decrypt ctxt2 and check the result
+        Plaintext result;
+        cc->Decrypt(keys.secretKey, ctxt2, &result);
 
-    // Decrypt ctxt2 and check the result
-    Plaintext result;
-    cc->Decrypt(keys.secretKey, ctxt2, &result);
-
-    std::vector<std::complex<double>> complexResult = result->GetCKKSPackedValue();
-    for (size_t i = 0; i < mInt.size(); i++){
-        std::cout << mComplex[i] << " " << complexResult[i] << std::endl;
+        std::vector<std::complex<double>> complexResult = result->GetCKKSPackedValue();
+        for (size_t i = 0; i < mInt.size(); i++){
+            std::cout << mComplex[i] << "\t" << complexResult[i] << std::endl;
+        }
     }
 }
