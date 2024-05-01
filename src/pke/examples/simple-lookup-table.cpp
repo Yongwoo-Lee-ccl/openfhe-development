@@ -573,7 +573,6 @@ inline uint32_t presetCryptoContextBootstrap(CryptoContext<DCRTPoly>& cc){
     parameters.SetSecretKeyDist(secretKeyDist);
 
     parameters.SetSecurityLevel(HEStd_128_classic);
-    // parameters.SetRingDim(1 << 12);
     parameters.SetNumLargeDigits(3);
     parameters.SetKeySwitchTechnique(HYBRID);
 
@@ -634,12 +633,6 @@ void testLUTANtoBN(){
         FindLUTPoly2D(partialTable, logDim, coeffs2D[i]);
     }
 
-    std::vector<uint32_t> mInt0 = {0,2,4,6};
-    std::vector<uint32_t> mInt1 = {1,3,5,7};
-    std::vector<std::complex<double>> mComplex0, mComplex1;
-    GetExponent(mInt0, logDim, mComplex0);
-    GetExponent(mInt1, logDim, mComplex1);
-    
     // Create the crypto context
     CryptoContext<DCRTPoly> cc;
     uint32_t maxDepth = presetCryptoContextBootstrap(cc);
@@ -649,6 +642,18 @@ void testLUTANtoBN(){
     cc->EvalMultKeyGen(keys.secretKey);
     cc->EvalConjugateKeyGen(keys.secretKey);
     cc->EvalBootstrapKeyGen(keys.secretKey, numSlots);
+
+    std::vector<uint32_t> mInt0(numSlots);
+    std::vector<uint32_t> mInt1(numSlots);
+    for (size_t i = 0; i < numSlots; i++){
+        uint32_t input = i % 256; // input range is 0 to 255
+        mInt0[i] = input & 0xF; // right four bits
+        mInt1[i] = input >> 4; // left four bits
+    }
+    
+    std::vector<std::complex<double>> mComplex0, mComplex1;
+    GetExponent(mInt0, logDim, mComplex0);
+    GetExponent(mInt1, logDim, mComplex1);
 
     Plaintext ptxt0 = cc->MakeCKKSPackedPlaintext(mComplex0, 1, maxDepth - 1);
     Plaintext ptxt1 = cc->MakeCKKSPackedPlaintext(mComplex1, 1, maxDepth - 1);
@@ -686,19 +691,27 @@ void testLUTANtoBN(){
     }
 
     std::cout << "Output table: \n====================\n";
-    std::cout << "In(L)\tIn(R)\tMerged\t|Out(R)\tOut(L)\tMerged\tExpected\n";
+    std::cout << "In(L)\tIn(R)\tMerged\t|Out(L)\tOut(R)\tMerged\tExpected\n";
     std::cout << std::hex;
-    for (size_t i = 0; i < mInt0.size(); i++){
-        std::cout << mInt0[i] << "\t" << mInt1[i] << "\t" << mInt0[i]*(1<<logDim) + mInt1[i] << 
-                "\t|" << intResult[0][i] << "\t" << intResult[1][i] << "\t" << intResult[0][i]+ intResult[1][i]*(1<<logDim)  <<
+    for (size_t i = 0; i < 8; i++){
+        std::cout << mInt1[i] << "\t" << mInt0[i] << "\t" << mInt1[i]*(1<<logDim) + mInt0[i] << 
+                "\t|" << intResult[1][i] << "\t" << intResult[0][i] << "\t" << intResult[0][i]+ intResult[1][i]*(1<<logDim)  <<
                 "\t" << invsbox[mInt0[i]*(1<<logDim) + mInt1[i]]<< std::endl;
     }
     std::cout << "Outupt(int)\tEncrypted\tExpected" << std::endl;
-    for (size_t i = 0; i < mInt0.size(); i++){
+    for (size_t i = 0; i < 8; i++){
         std::cout << intResult[0][i] << "\t" << result[0]->GetCKKSPackedValue()[i] << "\t";
         // calculate and print exp(-2*pi* i / 16 *intResult[0][i])
         std::cout << std::exp(std::complex<double>(0, -2 * M_PI * intResult[0][i] / 16)) << std::endl;
     }
+    std::cout << "Noise variance is: ";
+    double variance = 0.;
+    for (size_t i = 0; i < numSlots; i++){
+        // variance of noise, noise: result[0]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * intResult[0][i] / 16))
+        variance += std::norm(result[0]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * intResult[0][i] / 16)));
+        variance += std::norm(result[1]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * intResult[1][i] / 16)));
+    }
+    std::cout << variance / (2*numSlots) << std::endl;
 }
 
 void testExponent(){
