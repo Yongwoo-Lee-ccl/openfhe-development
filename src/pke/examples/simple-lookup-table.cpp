@@ -36,7 +36,6 @@
 #include "openfhe.h"
 
 #include <complex>
-#include <fftw3.h>
 #include <chrono>
 #include <cassert>
 
@@ -90,7 +89,7 @@ int main() {
     // testLUTNtoN();
     // testLUTNtoBN();
     testLUTANtoBN();
-    // testComplexOperation();
+
     return 0;
 }
 
@@ -206,21 +205,9 @@ void FindLUTPoly2D(std::vector<uint32_t> table, size_t logDim,
     ifft2(coeff);
 }
 
-inline Ciphertext<DCRTPoly> EvalMultComplex(Ciphertext<DCRTPoly> &ct, 
-                       std::complex<double> val){
-    auto cc = ct->GetCryptoContext();
-    return cc->EvalMult(ct, cc->MakeCKKSPackedPlaintext(std::vector<std::complex<double>>(cc->GetRingDimension()/2, val)));
-}
-
-inline Ciphertext<DCRTPoly> EvalAddComplex(Ciphertext<DCRTPoly> &ct, 
-                       std::complex<double> val){
-    auto cc = ct->GetCryptoContext();
-    return cc->EvalAdd(ct, cc->MakeCKKSPackedPlaintext(std::vector<std::complex<double>>(cc->GetRingDimension()/2, val)));
-}
-
 // evaluate n-to-n LUT
 void EvalLUT(Ciphertext<DCRTPoly> &ct, size_t logDim, 
-             std::vector<std::complex<double>> coeffs, 
+             std::vector<Plaintext> coeffs, 
              Ciphertext<DCRTPoly> &dest){
 
     auto cc = ct->GetCryptoContext();
@@ -243,17 +230,17 @@ void EvalLUT(Ciphertext<DCRTPoly> &ct, size_t logDim,
     }
 
     // inner product with coefficients
-    dest = EvalMultComplex(b[0], coeffs[1]);
+    dest = cc->EvalMult(b[0], coeffs[1]);
     for (size_t i = 2; i < codedim; i++){
-        auto tmp = EvalMultComplex(b[i - 1], coeffs[i]);
+        auto tmp = cc->EvalMult(b[i - 1], coeffs[i]);
         dest = cc->EvalAdd(dest, tmp);
     }
-    dest = EvalAddComplex(dest, coeffs[0]);
+    dest = cc->EvalAdd(dest, coeffs[0]);
 }
 
 // evaluate n-to-b*n LUT
 void EvalLUTs(Ciphertext<DCRTPoly> &ct, size_t logDim, 
-             std::vector<std::vector<std::complex<double>>> coeffs, 
+             std::vector<std::vector<Plaintext>> coeffs, 
              std::vector<Ciphertext<DCRTPoly>> &dest){
 
     auto cc = ct->GetCryptoContext();
@@ -277,18 +264,18 @@ void EvalLUTs(Ciphertext<DCRTPoly> &ct, size_t logDim,
 
     for(auto &table : coeffs){
         // inner product with coefficients
-        dest.push_back(EvalMultComplex(b[0], table[1]));
+        dest.push_back(cc->EvalMult(b[0], table[1]));
         for (size_t i = 2; i < codedim; i++){
-            auto tmp = EvalMultComplex(b[i - 1], table[i]);
+            auto tmp = cc->EvalMult(b[i - 1], table[i]);
             dest.back() = cc->EvalAdd(dest.back(), tmp);
         }
-        dest.back() = EvalAddComplex(dest.back(), table[0]);
+        dest.back() = cc->EvalAdd(dest.back(), table[0]);
     }
 }
 
 // evaluate 2n-to-b*n LUT
 void EvalLUTs2D(Ciphertext<DCRTPoly> &ct0, Ciphertext<DCRTPoly> &ct1, 
-                size_t logDim, std::vector<std::vector<std::vector<std::complex<double>>>> coeffs, 
+                size_t logDim, std::vector<std::vector<std::vector<Plaintext>>> coeffs, 
                 std::vector<Ciphertext<DCRTPoly>> &dest){
     auto cc = ct0->GetCryptoContext();
     auto algo = cc->GetScheme();
@@ -297,22 +284,6 @@ void EvalLUTs2D(Ciphertext<DCRTPoly> &ct0, Ciphertext<DCRTPoly> &ct1,
 
     std::vector<Ciphertext<DCRTPoly>> b0(codedim - 1);
     std::vector<Ciphertext<DCRTPoly>> b1(codedim - 1);
-
-
-    // find power basis (without using complex conjugate)
-    // b0[0] = ct0, b1[0] = ct1;
-    // for (size_t i = 2; i < codedim; i++){
-    //     auto i0 = i/2;
-    //     auto i1 = i - i0;
-    //     b0[i - 1] = cc->EvalMult(b0[i0 - 1], b0[i1 - 1]);
-    //     b1[i - 1] = cc->EvalMult(b1[i0 - 1], b1[i1 - 1]);
-    // }
-
-    // // match the level and depth
-    // for (size_t i = 0; i < codedim/2; i++){ 
-    //     algo->AdjustLevelsAndDepthInPlace(b0[i], b0[codedim-2]);
-    //     algo->AdjustLevelsAndDepthInPlace(b1[i], b1[codedim-2]);
-    // }
 
     // find power basis
     b0[0] = ct0, b1[0] = ct1;
@@ -342,12 +313,12 @@ void EvalLUTs2D(Ciphertext<DCRTPoly> &ct0, Ciphertext<DCRTPoly> &ct1,
         Ciphertext<DCRTPoly> tableEval;
         for (size_t i = 0; i < codedim; i++){
             // Evaluate i-th row
-            auto rowEval = EvalMultComplex(b1[0], table[i][1]);
+            auto rowEval = cc->EvalMult(b1[0], table[i][1]);
             for (size_t j = 2; j < codedim; j++){
-                auto tmp = EvalMultComplex(b1[j - 1], table[i][j]);
+                auto tmp = cc->EvalMult(b1[j - 1], table[i][j]);
                 rowEval = cc->EvalAdd(rowEval, tmp);
             }
-            rowEval = EvalAddComplex(rowEval, table[i][0]);
+            rowEval = cc->EvalAdd(rowEval, table[i][0]);
 
             // Add to the result
             if (i == 0){
@@ -439,13 +410,19 @@ void testLUTNtoN(){
     auto keys = cc->KeyGen();
     cc->EvalMultKeyGen(keys.secretKey);
 
+    // Encode coefficients
+    std::vector<Plaintext> coeffsPt(coeffs.size());
+    for (size_t i = 0; i < coeffs.size(); i++){
+        coeffsPt[i] = cc->MakeCKKSPackedPlaintext(std::vector<std::complex<double>>(cc->GetRingDimension()/2, coeffs[i]));
+    }
+
     Plaintext ptxt1 = cc->MakeCKKSPackedPlaintext(mComplex);
     Ciphertext<DCRTPoly> ctxt1 = cc->Encrypt(keys.publicKey, ptxt1);
 
     // Evaluate the LUT and measure the time
     auto start = std::chrono::high_resolution_clock::now();
 
-    EvalLUT(ctxt1, logDim, coeffs, ctxt1);
+    EvalLUT(ctxt1, logDim, coeffsPt, ctxt1);
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
@@ -512,13 +489,22 @@ void testLUTNtoBN(){
     auto keys = cc->KeyGen();
     cc->EvalMultKeyGen(keys.secretKey);
 
+    // Encode coeffs
+    std::vector<std::vector<Plaintext>> coeffsPt(outB);
+    for (size_t i = 0; i < outB; i++){
+        coeffsPt[i].resize(coeffs[i].size());
+        for (size_t j = 0; j < coeffs[i].size(); j++){
+            coeffsPt[i][j] = cc->MakeCKKSPackedPlaintext(std::vector<std::complex<double>>(cc->GetRingDimension()/2, coeffs[i][j]));
+        }
+    }
+
     Plaintext ptxt1 = cc->MakeCKKSPackedPlaintext(mComplex);
     Ciphertext<DCRTPoly> ctxt1 = cc->Encrypt(keys.publicKey, ptxt1);
     std::vector<Ciphertext<DCRTPoly>> ctxtout;
     // Evaluate the LUT and measure the time
     auto start = std::chrono::high_resolution_clock::now();
 
-    EvalLUTs(ctxt1, logDim, coeffs, ctxtout);
+    EvalLUTs(ctxt1, logDim, coeffsPt, ctxtout);
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
@@ -639,9 +625,24 @@ void testLUTANtoBN(){
 
     auto keys = cc->KeyGen();
     uint32_t numSlots = 1 << 15;
+
+    std::cout << "Generating keys..." << std::endl;
     cc->EvalMultKeyGen(keys.secretKey);
     cc->EvalConjugateKeyGen(keys.secretKey);
     cc->EvalBootstrapKeyGen(keys.secretKey, numSlots);
+    std::cout << "Keys generated." << std::endl;
+
+    // Encode coeffs
+    std::vector<std::vector<std::vector<Plaintext>>> coeffsPt(outB);
+    for (size_t i = 0; i < outB; i++){
+        coeffsPt[i].resize(coeffs2D[i].size());
+        for (size_t j = 0; j < coeffs2D[i].size(); j++){
+            coeffsPt[i][j].resize(coeffs2D[i][j].size());
+            for (size_t k = 0; k < coeffs2D[i][j].size(); k++){
+                coeffsPt[i][j][k] = cc->MakeCKKSPackedPlaintext(std::vector<std::complex<double>>(numSlots, coeffs2D[i][j][k]), 1, maxDepth - 2);
+            }
+        }
+    }
 
     std::vector<uint32_t> mInt0(numSlots);
     std::vector<uint32_t> mInt1(numSlots);
@@ -673,7 +674,7 @@ void testLUTANtoBN(){
     // Evaluate the LUT and measure the time
     auto start = std::chrono::high_resolution_clock::now();
 
-    EvalLUTs2D(ctxt0, ctxt1, logDim, coeffs2D, ctxtout);
+    EvalLUTs2D(ctxt0, ctxt1, logDim, coeffsPt, ctxtout);
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
@@ -721,47 +722,5 @@ void testExponent(){
     auto mInt2 = GetLog(mComplex, 3);
     for (size_t i = 0; i < mInt.size(); i++){
         std::cout << mInt[i] << " " << mComplex[i] << " "  << mInt2[i] << std::endl;
-    }
-}
-
-void testComplexOperation(){
-    std::vector<uint32_t> mInt = {0,1,2,3,4,5,6,7};
-    std::vector<std::complex<double>> mComplex;
-    GetExponent(mInt, 3, mComplex);
-    // std::complex<double> c(1,2);
-
-    // Create the crypto context
-    uint32_t multDepth = 1;
-    uint32_t scaleModSize = 50;
-    CCParams<CryptoContextCKKSRNS> parameters;
-    parameters.SetMultiplicativeDepth(multDepth);
-    parameters.SetScalingModSize(scaleModSize);
-
-    CryptoContext<DCRTPoly> cc = GenCryptoContext(parameters);
-
-    cc->Enable(PKE);
-    cc->Enable(KEYSWITCH);
-    cc->Enable(LEVELEDSHE);
-
-    auto keys = cc->KeyGen();
-    cc->EvalMultKeyGen(keys.secretKey);
-    cc->EvalRotateKeyGen(keys.secretKey, {1});
-    cc->EvalConjugateKeyGen(keys.secretKey);
-
-    // encrypt mInt
-    Plaintext ptxt1 = cc->MakeCKKSPackedPlaintext(mComplex);
-    Ciphertext<DCRTPoly> ctxt1 = cc->Encrypt(keys.publicKey, ptxt1);
-
-    {
-        std::cout << "Original\tConjugated" << std::endl;
-        auto ctxt2 = cc->EvalConjugate(ctxt1);
-        // Decrypt ctxt2 and check the result
-        Plaintext result;
-        cc->Decrypt(keys.secretKey, ctxt2, &result);
-
-        std::vector<std::complex<double>> complexResult = result->GetCKKSPackedValue();
-        for (size_t i = 0; i < mInt.size(); i++){
-            std::cout << mComplex[i] << "\t" << complexResult[i] << std::endl;
-        }
     }
 }
