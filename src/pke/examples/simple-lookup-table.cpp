@@ -39,25 +39,6 @@
 #include <chrono>
 #include <cassert>
 
-
-// Note: put any 2logDim-to-2logDim table you want to test here 
-std::vector<uint32_t> invsbox = {0x52,0x09,0x6a,0xd5,0x30,0x36,0xa5,0x38,0xbf,0x40,0xa3,0x9e,0x81,0xf3,0xd7,0xfb,
-                                0x7c,0xe3,0x39,0x82,0x9b,0x2f,0xff,0x87,0x34,0x8e,0x43,0x44,0xc4,0xde,0xe9,0xcb,
-                                0x54,0x7b,0x94,0x32,0xa6,0xc2,0x23,0x3d,0xee,0x4c,0x95,0x0b,0x42,0xfa,0xc3,0x4e,
-                                0x08,0x2e,0xa1,0x66,0x28,0xd9,0x24,0xb2,0x76,0x5b,0xa2,0x49,0x6d,0x8b,0xd1,0x25,
-                                0x72,0xf8,0xf6,0x64,0x86,0x68,0x98,0x16,0xd4,0xa4,0x5c,0xcc,0x5d,0x65,0xb6,0x92,
-                                0x6c,0x70,0x48,0x50,0xfd,0xed,0xb9,0xda,0x5e,0x15,0x46,0x57,0xa7,0x8d,0x9d,0x84,
-                                0x90,0xd8,0xab,0x00,0x8c,0xbc,0xd3,0x0a,0xf7,0xe4,0x58,0x05,0xb8,0xb3,0x45,0x06,
-                                0xd0,0x2c,0x1e,0x8f,0xca,0x3f,0x0f,0x02,0xc1,0xaf,0xbd,0x03,0x01,0x13,0x8a,0x6b,
-                                0x3a,0x91,0x11,0x41,0x4f,0x67,0xdc,0xea,0x97,0xf2,0xcf,0xce,0xf0,0xb4,0xe6,0x73,
-                                0x96,0xac,0x74,0x22,0xe7,0xad,0x35,0x85,0xe2,0xf9,0x37,0xe8,0x1c,0x75,0xdf,0x6e,
-                                0x47,0xf1,0x1a,0x71,0x1d,0x29,0xc5,0x89,0x6f,0xb7,0x62,0x0e,0xaa,0x18,0xbe,0x1b,
-                                0xfc,0x56,0x3e,0x4b,0xc6,0xd2,0x79,0x20,0x9a,0xdb,0xc0,0xfe,0x78,0xcd,0x5a,0xf4,
-                                0x1f,0xdd,0xa8,0x33,0x88,0x07,0xc7,0x31,0xb1,0x12,0x10,0x59,0x27,0x80,0xec,0x5f,
-                                0x60,0x51,0x7f,0xa9,0x19,0xb5,0x4a,0x0d,0x2d,0xe5,0x7a,0x9f,0x93,0xc9,0x9c,0xef,
-                                0xa0,0xe0,0x3b,0x4d,0xae,0x2a,0xf5,0xb0,0xc8,0xeb,0xbb,0x3c,0x83,0x53,0x99,0x61,
-                                0x17,0x2b,0x04,0x7e,0xba,0x77,0xd6,0x26,0xe1,0x69,0x14,0x63,0x55,0x21,0x0c,0x7d};
-
 using namespace lbcrypto;
 
 // gets a vector of integer (0 to codedim-1), and codedim, and return exp(-2 pi i * x / codedim)
@@ -84,11 +65,13 @@ void testLUTANtoBN();
 void testFFT();
 void testExponent();
 void testComplexOperation();
+void testLog();
 
 int main() {
     // testLUTNtoN();
     // testLUTNtoBN();
     testLUTANtoBN();
+    // testLog();
 
     return 0;
 }
@@ -176,12 +159,11 @@ void GetExponent(std::vector<uint32_t> input, size_t logDim,
 std::vector<int32_t> GetLog(std::vector<std::complex<double>> intput, size_t logDim){
     size_t codedim = 1 << logDim;
     std::vector<int32_t> result;
+    std::complex<double> scale = std::complex<double>(0, -2 * M_PI / codedim);
     for (size_t i = 0; i < intput.size(); i++){
-        double angle = std::arg(intput[i]);
-        // if (angle < 0){
-        //     angle += 2 * M_PI;
-        // }
-        result.push_back((codedim - 1) & (int32_t)std::round(angle * codedim / (-2 * M_PI)));
+        std::complex<double> res = std::log(intput[i]) / scale;
+        int resInt = round(res.real());
+        result.push_back((resInt + codedim) % codedim);
     }
     return result;
 }
@@ -313,9 +295,9 @@ void EvalLUTs2D(Ciphertext<DCRTPoly> &ct0, Ciphertext<DCRTPoly> &ct1,
         Ciphertext<DCRTPoly> tableEval;
         for (size_t i = 0; i < codedim; i++){
             // Evaluate i-th row
-            auto rowEval = cc->EvalMult(b1[0], table[i][1]);
+            auto rowEval = cc->EvalMult(b0[0], table[i][1]);
             for (size_t j = 2; j < codedim; j++){
-                auto tmp = cc->EvalMult(b1[j - 1], table[i][j]);
+                auto tmp = cc->EvalMult(b0[j - 1], table[i][j]);
                 rowEval = cc->EvalAdd(rowEval, tmp);
             }
             rowEval = cc->EvalAdd(rowEval, table[i][0]);
@@ -324,7 +306,7 @@ void EvalLUTs2D(Ciphertext<DCRTPoly> &ct0, Ciphertext<DCRTPoly> &ct1,
             if (i == 0){
                 tableEval = rowEval;
             } else {
-                auto tmp = cc->EvalMult(rowEval, b0[i - 1]);
+                auto tmp = cc->EvalMult(rowEval, b1[i - 1]);
                 tableEval = cc->EvalAdd(tableEval,tmp);
             }
         }
@@ -601,6 +583,23 @@ void testLUTANtoBN(){
     std::cout << "Test an-to-bn LUT" << std::endl;
 
     std::cout << "Input invsbox: \n====================\n";
+    // Note: put any 2logDim-to-2logDim table you want to test here 
+    std::vector<uint32_t> invsbox = {0x52,0x09,0x6a,0xd5,0x30,0x36,0xa5,0x38,0xbf,0x40,0xa3,0x9e,0x81,0xf3,0xd7,0xfb,
+                                    0x7c,0xe3,0x39,0x82,0x9b,0x2f,0xff,0x87,0x34,0x8e,0x43,0x44,0xc4,0xde,0xe9,0xcb,
+                                    0x54,0x7b,0x94,0x32,0xa6,0xc2,0x23,0x3d,0xee,0x4c,0x95,0x0b,0x42,0xfa,0xc3,0x4e,
+                                    0x08,0x2e,0xa1,0x66,0x28,0xd9,0x24,0xb2,0x76,0x5b,0xa2,0x49,0x6d,0x8b,0xd1,0x25,
+                                    0x72,0xf8,0xf6,0x64,0x86,0x68,0x98,0x16,0xd4,0xa4,0x5c,0xcc,0x5d,0x65,0xb6,0x92,
+                                    0x6c,0x70,0x48,0x50,0xfd,0xed,0xb9,0xda,0x5e,0x15,0x46,0x57,0xa7,0x8d,0x9d,0x84,
+                                    0x90,0xd8,0xab,0x00,0x8c,0xbc,0xd3,0x0a,0xf7,0xe4,0x58,0x05,0xb8,0xb3,0x45,0x06,
+                                    0xd0,0x2c,0x1e,0x8f,0xca,0x3f,0x0f,0x02,0xc1,0xaf,0xbd,0x03,0x01,0x13,0x8a,0x6b,
+                                    0x3a,0x91,0x11,0x41,0x4f,0x67,0xdc,0xea,0x97,0xf2,0xcf,0xce,0xf0,0xb4,0xe6,0x73,
+                                    0x96,0xac,0x74,0x22,0xe7,0xad,0x35,0x85,0xe2,0xf9,0x37,0xe8,0x1c,0x75,0xdf,0x6e,
+                                    0x47,0xf1,0x1a,0x71,0x1d,0x29,0xc5,0x89,0x6f,0xb7,0x62,0x0e,0xaa,0x18,0xbe,0x1b,
+                                    0xfc,0x56,0x3e,0x4b,0xc6,0xd2,0x79,0x20,0x9a,0xdb,0xc0,0xfe,0x78,0xcd,0x5a,0xf4,
+                                    0x1f,0xdd,0xa8,0x33,0x88,0x07,0xc7,0x31,0xb1,0x12,0x10,0x59,0x27,0x80,0xec,0x5f,
+                                    0x60,0x51,0x7f,0xa9,0x19,0xb5,0x4a,0x0d,0x2d,0xe5,0x7a,0x9f,0x93,0xc9,0x9c,0xef,
+                                    0xa0,0xe0,0x3b,0x4d,0xae,0x2a,0xf5,0xb0,0xc8,0xeb,0xbb,0x3c,0x83,0x53,0x99,0x61,
+                                    0x17,0x2b,0x04,0x7e,0xba,0x77,0xd6,0x26,0xe1,0x69,0x14,0x63,0x55,0x21,0x0c,0x7d};
     std::cout << std::hex;
     for (size_t i = 0; i < 16; i++){
         std::cout << i << "\t" << invsbox[i] << std::endl;
@@ -656,8 +655,10 @@ void testLUTANtoBN(){
     GetExponent(mInt0, logDim, mComplex0);
     GetExponent(mInt1, logDim, mComplex1);
 
-    Plaintext ptxt0 = cc->MakeCKKSPackedPlaintext(mComplex0, 1, maxDepth - 1);
-    Plaintext ptxt1 = cc->MakeCKKSPackedPlaintext(mComplex1, 1, maxDepth - 1);
+    uint32_t initLevel = 1;
+
+    Plaintext ptxt0 = cc->MakeCKKSPackedPlaintext(mComplex0, 1, maxDepth - initLevel);
+    Plaintext ptxt1 = cc->MakeCKKSPackedPlaintext(mComplex1, 1, maxDepth - initLevel);
     Ciphertext<DCRTPoly> ctxt0 = cc->Encrypt(keys.publicKey, ptxt0);
     Ciphertext<DCRTPoly> ctxt1 = cc->Encrypt(keys.publicKey, ptxt1);
     auto b_start = std::chrono::high_resolution_clock::now();
@@ -696,21 +697,47 @@ void testLUTANtoBN(){
     std::cout << std::hex;
     for (size_t i = 0; i < 8; i++){
         std::cout << mInt1[i] << "\t" << mInt0[i] << "\t" << mInt1[i]*(1<<logDim) + mInt0[i] << 
-                "\t|" << intResult[1][i] << "\t" << intResult[0][i] << "\t" << intResult[0][i]+ intResult[1][i]*(1<<logDim)  <<
-                "\t" << invsbox[mInt0[i]*(1<<logDim) + mInt1[i]]<< std::endl;
+                "\t|" << intResult[1][i] << "\t" << intResult[0][i] << "\t" << intResult[1][i]*(1<<logDim) + intResult[0][i] <<
+                "\t" << invsbox[mInt1[i]*(1<<logDim) + mInt0[i]]<< std::endl;
     }
-    std::cout << "Outupt(int)\tEncrypted\tExpected" << std::endl;
+
+    std::vector<std::vector<uint32_t>> expected(outB);
+    for (size_t i = 0; i < outB; i++){
+        expected[i].resize(numSlots);
+        uint32_t mask = (1<<logDim) - 1;
+        mask <<= logDim * i;
+        for (size_t j = 0; j < numSlots; j++){
+            expected[i][j] = (invsbox[j % (invsbox.size())] & mask) >> (logDim * i);
+        }
+    }
+
+    std::cout << "Int and complex value table\n================================" << std::endl;
+    std::cout << "Enced(int)\tEnced\tExpect(int)\tExpect" << std::endl;
     for (size_t i = 0; i < 8; i++){
         std::cout << intResult[0][i] << "\t" << result[0]->GetCKKSPackedValue()[i] << "\t";
-        // calculate and print exp(-2*pi* i / 16 *intResult[0][i])
-        std::cout << std::exp(std::complex<double>(0, -2 * M_PI * intResult[0][i] / 16)) << std::endl;
+        // calculate and print exp(-2*pi* i / 16 *expected[0][i])
+        std::cout << expected[0][i] << "\t" << std::exp(std::complex<double>(0, -2 * M_PI * expected[0][i] / 16)) << std::endl;
     }
+
+    uint32_t count_failure = 0;
+    std::cout << std::dec;
+    for (size_t i = 0; i < outB; i++){
+        for (size_t j = 0; j < numSlots; j++){
+            if(expected[i][j] != intResult[i][j]){
+                std::cout << "Mismatch at " << i << " " << j << " " << expected[i][j] << " " 
+                << intResult[i][j] << "(" << result[i]->GetCKKSPackedValue()[j] << ")" << std::endl;
+                count_failure++;
+            }
+        }  
+    }
+    std::cout << "Number of failures: " << count_failure << "/" << numSlots*outB << std::endl;
+
     std::cout << "Noise variance is: ";
     double variance = 0.;
     for (size_t i = 0; i < numSlots; i++){
-        // variance of noise, noise: result[0]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * intResult[0][i] / 16))
-        variance += std::norm(result[0]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * intResult[0][i] / 16)));
-        variance += std::norm(result[1]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * intResult[1][i] / 16)));
+        // variance of noise, noise: result[0]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * expected[0][i] / 16))
+        variance += std::norm(result[0]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * (int)expected[0][i] / 16)));
+        variance += std::norm(result[1]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * (int)expected[1][i] / 16)));
     }
     std::cout << variance / (2*numSlots) << std::endl;
 }
@@ -722,5 +749,14 @@ void testExponent(){
     auto mInt2 = GetLog(mComplex, 3);
     for (size_t i = 0; i < mInt.size(); i++){
         std::cout << mInt[i] << " " << mComplex[i] << " "  << mInt2[i] << std::endl;
+    }
+}
+
+void testLog(){
+    // make some vector of complex numbner (size 4) and test getLog
+    std::vector<std::complex<double>> mComplex = {std::complex<double>(0.000110165,0.999442), std::complex<double>(0, 1), std::complex<double>(-1, 0), std::complex<double>(0, -1)};
+    auto mInt = GetLog(mComplex, 2);
+    for (size_t i = 0; i < mComplex.size(); i++){
+        std::cout << mComplex[i] << " " << mInt[i] << std::endl;
     }
 }
