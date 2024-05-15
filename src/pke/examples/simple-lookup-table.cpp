@@ -51,11 +51,21 @@ void EvalLUT(Ciphertext<DCRTPoly> &ct, size_t logDim, std::vector<std::complex<d
              std::vector<Ciphertext<DCRTPoly>> &dest);
 void FindLUTPoly2D(std::vector<uint32_t> table, size_t logDim, 
                    std::vector<std::vector<std::complex<double>>> &coeff);
+void FindLUTPoly2DAsymmetric(std::vector<uint32_t> table, size_t logDim0, size_t logDim1, size_t logDimOut, 
+                   std::vector<std::vector<std::complex<double>>> &coeff);
+void FindLUTPoly3DAsymmetric(std::vector<uint32_t> table, std::vector<size_t> logDim, size_t logDimOut, 
+                   std::vector<std::vector<std::vector<std::complex<double>>>> &coeff);
 void EvalLUTs2D(Ciphertext<DCRTPoly> &ct0, Ciphertext<DCRTPoly> &ct1, 
                 size_t logDim, std::vector<std::vector<std::vector<std::complex<double>>>> coeffs,
                 std::vector<Ciphertext<DCRTPoly>> &dest);
 void EvalLUTs2DAsymmetric(Ciphertext<DCRTPoly> &ct0, Ciphertext<DCRTPoly> &ct1, 
                 size_t logDim0, size_t logDim1, std::vector<std::vector<std::vector<Plaintext>>> coeffs, 
+                std::vector<Ciphertext<DCRTPoly>> &dest);
+void EvalLUTs3DAsymmetric(std::vector<Ciphertext<DCRTPoly>> &ct, 
+                std::vector<size_t> logDim, std::vector<std::vector<std::vector<std::vector<Plaintext>>>> coeffs, 
+                std::vector<Ciphertext<DCRTPoly>> &dest);
+void EvalLUTs3DAsymmetricDepthFirst(std::vector<Ciphertext<DCRTPoly>> &ct, 
+                std::vector<size_t> logDim, std::vector<std::vector<std::vector<std::vector<Plaintext>>>> coeffs, 
                 std::vector<Ciphertext<DCRTPoly>> &dest);
 void EvalNoiseReductionInplace(Ciphertext<DCRTPoly> ct, size_t logDim, CryptoContext<DCRTPoly> cc);
 void ifft(std::vector<std::complex<double>>& data);
@@ -65,6 +75,7 @@ void testLUTNtoN();
 void testLUTNtoBN();
 void testLUTANtoBN();
 void testLUTANtoBNAsymmetric();
+void testLUT3NtoBNAsymmetric();
 
 void testFFT();
 void testExponent();
@@ -75,7 +86,8 @@ int main() {
     // testLUTNtoN();
     // testLUTNtoBN();
     // testLUTANtoBN();
-    testLUTANtoBNAsymmetric();
+    // testLUTANtoBNAsymmetric();
+    testLUT3NtoBNAsymmetric();
     // testLog();
 
     return 0;
@@ -152,6 +164,33 @@ void ifft2(std::vector<std::vector<std::complex<double>>>& data) {
     }
 }
 
+void ifft3(std::vector<std::vector<std::vector<std::complex<double>>>>& data) {
+    // Apply IFFT on each row
+    for (auto& plane : data) {
+        ifft2(plane);
+    }
+
+    // Apply IFFT on each column
+    int d0 = data.size();
+    int d1 = data[0].size();
+    int d2 = data[0][0].size();
+    for (size_t j = 0; j < d1; j++){
+        for (size_t k = 0; k < d2; k++){
+            std::vector<std::complex<double>> columnData(d0);
+            for (size_t i = 0; i < d0; i++){
+                columnData[i] = data[i][j][k];
+            }
+            
+            ifft(columnData);
+
+            for (size_t i = 0; i < d0; i++){
+                data[i][j][k] = columnData[i];
+            }
+        }
+        
+    }
+}
+
 // gets a vector of integer (0 to codedim-1), and codedim, and return exp(-2 pi i * x / codedim)
 void GetExponent(std::vector<uint32_t> input, size_t logDim,
                  std::vector<std::complex<double>> &result){
@@ -206,6 +245,29 @@ void FindLUTPoly2DAsymmetric(std::vector<uint32_t> table, size_t logDim0, size_t
     // Perform inverse FFT on coeff
     ifft2(coeff);
 }
+
+void FindLUTPoly3DAsymmetric(std::vector<uint32_t> table, std::vector<size_t> logDim, size_t logDimOut, 
+                   std::vector<std::vector<std::vector<std::complex<double>>>> &coeff){
+    std::vector<size_t> codedim(3);
+    for (size_t i = 0; i < 3; i++){
+        codedim[i] = 1 << logDim[i];
+    }
+
+    for (size_t i = 0; i < codedim[2]; i++){
+        std::vector<std::vector<std::complex<double>>> plane;
+        for (size_t j = 0; j < codedim[1]; j++){
+            std::vector<std::complex<double>> row;
+            std::vector<uint32_t> chunk(table.begin() + i*codedim[1]*codedim[0] + j*codedim[0], table.begin() + i*codedim[1]*codedim[0] + (j+1)*codedim[0]);
+            GetExponent(chunk, logDimOut, row);
+            plane.push_back(row);
+        }
+        coeff.push_back(plane);
+    }
+    
+    // Perform inverse FFT on coeff
+    ifft3(coeff);
+}
+
 // evaluate n-to-n LUT
 void EvalLUT(Ciphertext<DCRTPoly> &ct, size_t logDim, 
              std::vector<Plaintext> coeffs, 
@@ -397,6 +459,138 @@ void EvalLUTs2DAsymmetric(Ciphertext<DCRTPoly> &ct0, Ciphertext<DCRTPoly> &ct1,
             } else {
                 auto tmp = cc->EvalMult(rowEval, b1[i - 1]);
                 tableEval = cc->EvalAdd(tableEval,tmp);
+            }
+        }
+        dest.push_back(tableEval);
+    }
+}
+
+// evaluate 3n-to-b*n LUT but two values has different bit length
+void EvalLUTs3DAsymmetric(std::vector<Ciphertext<DCRTPoly>> &ct, 
+                std::vector<size_t> logDim, std::vector<std::vector<std::vector<std::vector<Plaintext>>>> coeffs, 
+                std::vector<Ciphertext<DCRTPoly>> &dest){
+    auto cc = ct[0]->GetCryptoContext();
+    auto algo = cc->GetScheme();
+
+    std::vector<size_t> codedim(3);
+    std::vector<std::vector<Ciphertext<DCRTPoly>>> b(3);
+    for (size_t i = 0; i < 3; i++){
+        codedim[i] = 1 << logDim[i];
+        b[i].resize(codedim[i] - 1);
+        b[i][0] = ct[i];
+
+        // find power basis
+        for (size_t j = 2; j <= codedim[i]/2; j++){
+            auto i0 = j/2;
+            auto i1 = j - i0;
+            b[i][j - 1] = cc->EvalMult(b[i][i0 - 1], b[i][i1 - 1]);
+        }
+        // match the level and depth
+        for (size_t j = 0; j < codedim[i]/2 - 1; j++){ 
+            algo->AdjustLevelsAndDepthInPlace(b[i][j], b[i][codedim[i]/2 - 1]);
+        }
+        // high degree terms using conjugate
+        for (size_t j = codedim[i]/2 + 1; j < codedim[i]; j++){
+            auto i0 = codedim[i] - j;
+            b[i][j - 1] = cc->EvalConjugate(b[i][i0 - 1]);
+        }
+    }
+
+    // evaluate the polynomial
+    for (auto &table : coeffs){
+        // inner product with coefficients
+        Ciphertext<DCRTPoly> tableEval;
+        for (size_t i = 0; i < codedim[2]; i++){
+            Ciphertext<DCRTPoly> planeEval;
+            for (size_t j = 0; j < codedim[1]; j++){
+                // Evaluate k-th row
+                auto rowEval = cc->EvalMult(b[0][0], table[i][j][1]);
+                for (size_t k = 2; k < codedim[0]; k++){
+                    auto tmp = cc->EvalMult(b[0][k - 1], table[i][j][k]);
+                    rowEval = cc->EvalAdd(rowEval, tmp);
+                }
+                rowEval = cc->EvalAdd(rowEval, table[i][j][0]);
+
+                // Add to the result
+                if (j == 0){
+                    planeEval = rowEval;
+                } else {
+                    auto tmp = cc->EvalMult(rowEval, b[1][j - 1]);
+                    planeEval = cc->EvalAdd(planeEval,tmp);
+                }
+            }
+            // Add to the result
+            if (i == 0){
+                tableEval = planeEval;
+            } else {
+                auto tmp = cc->EvalMult(planeEval, b[2][i - 1]);
+                tableEval = cc->EvalAdd(tableEval,tmp);
+            }
+        }
+        dest.push_back(tableEval);
+    }
+}
+
+// evaluate 3n-to-b*n LUT but two values has different bit length
+void EvalLUTs3DAsymmetricDepthFirst(std::vector<Ciphertext<DCRTPoly>> &ct, 
+                std::vector<size_t> logDim, std::vector<std::vector<std::vector<std::vector<Plaintext>>>> coeffs, 
+                std::vector<Ciphertext<DCRTPoly>> &dest){
+    auto cc = ct[0]->GetCryptoContext();
+    auto algo = cc->GetScheme();
+
+    std::vector<size_t> codedim(3);
+    std::vector<std::vector<Ciphertext<DCRTPoly>>> b(3);
+    for (size_t i = 0; i < 3; i++){
+        codedim[i] = 1 << logDim[i];
+        b[i].resize(codedim[i] - 1);
+        b[i][0] = ct[i];
+
+        // find power basis
+        for (size_t j = 2; j <= codedim[i]/2; j++){
+            auto i0 = j/2;
+            auto i1 = j - i0;
+            b[i][j - 1] = cc->EvalMult(b[i][i0 - 1], b[i][i1 - 1]);
+        }
+        // match the level and depth
+        for (size_t j = 0; j < codedim[i]/2 - 1; j++){ 
+            algo->AdjustLevelsAndDepthInPlace(b[i][j], b[i][codedim[i]/2 - 1]);
+        }
+        // high degree terms using conjugate
+        for (size_t j = codedim[i]/2 + 1; j < codedim[i]; j++){
+            auto i0 = codedim[i] - j;
+            b[i][j - 1] = cc->EvalConjugate(b[i][i0 - 1]);
+        }
+    }
+
+    // evaluate the polynomial
+    for (auto &table : coeffs){
+        // inner product with coefficients
+        Ciphertext<DCRTPoly> tableEval;
+        for (size_t i = 0; i < codedim[2]; i++){
+            for (size_t j = 0; j < codedim[1]; j++){
+                // Evaluate k-th row
+                auto rowEval = cc->EvalMult(b[0][0], table[i][j][1]);
+                for (size_t k = 2; k < codedim[0]; k++){
+                    auto tmp = cc->EvalMult(b[0][k - 1], table[i][j][k]);
+                    rowEval = cc->EvalAdd(rowEval, tmp);
+                }
+                rowEval = cc->EvalAdd(rowEval, table[i][j][0]);
+                
+                if (i == 0 && j == 0){
+                    tableEval = rowEval;
+                    continue;
+                } 
+
+                Ciphertext<DCRTPoly> ct_ij;
+                if (i == 0){
+                    ct_ij = b[1][j - 1];
+                } else if (j == 0) {
+                    ct_ij = b[2][i - 1];
+                } else{
+                    ct_ij = cc->EvalMult(b[2][i - 1], b[1][j - 1]);
+                }
+
+                tableEval = cc->EvalAdd(tableEval, cc->EvalMult(rowEval, ct_ij));
             }
         }
         dest.push_back(tableEval);
@@ -876,17 +1070,6 @@ void testLUTANtoBNAsymmetric(){
         nShift += logDim[i];
     }
 
-    // print coeffs2D
-    // for (size_t i = 0; i < outB; i++){
-    //     std::cout << "Coeffs for output " << i << std::endl;
-    //     for (size_t j = 0; j < coeffs2D[i].size(); j++){
-    //         for (size_t k = 0; k < coeffs2D[i][j].size(); k++){
-    //             std::cout << coeffs2D[i][j][k] << " ";
-    //         }
-    //         std::cout << std::endl;
-    //     }
-    // }
-
     // Create the crypto context
     CryptoContext<DCRTPoly> cc;
     uint32_t maxDepth = presetCryptoContextBootstrap(cc);
@@ -1017,6 +1200,181 @@ void testLUTANtoBNAsymmetric(){
         variance += std::norm(result[1]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * (int)expected[1][i] / (1 << logDim[1]))));
     }
     std::cout << variance / (2*numSlots) << std::endl;
+}
+
+void testLUT3NtoBNAsymmetric(){
+    size_t outB = 3; 
+
+    std::vector<size_t> logDim = {3, 3, 3}; // size of outB, input and output has same size.
+
+    size_t inputLen = 0;
+    for (auto &n : logDim){
+       inputLen += n; 
+    }
+    std::cout << "inputLen: " << inputLen << "\n";
+    
+    std::cout << "Test 3n-to-3n LUT, Asymmetric with (" << logDim[0] << ", " << logDim[1] << ", " << logDim[2] << ") bits inputs" << std::endl;
+
+    std::cout << "Input table: \n====================\n";
+    // Note: put any 2logDim-to-2logDim table you want to test here 
+    std::vector<uint32_t> input_table(1<<inputLen);
+
+    for (size_t i = 0; i < 1<<inputLen; i++){ // put any cool table you want
+        // mod 5
+        input_table[i] = i % 5;
+    }
+
+    std::cout << std::hex;
+    for (size_t i = 0; i < 16; i++){
+        std::cout << i << "\t" << input_table[i] << std::endl;
+    }
+    std::cout << "..." << std::endl << std::endl;
+
+    std::vector<std::vector<std::vector<std::vector<std::complex<double>>>>> coeffs3D(3);
+    // divide tables by chunks of size logDim-bit
+    size_t nShift = 0; 
+    for (size_t i = 0; i < outB; i++){
+        // std::cout << "Coeffs(int) for output " << i << std::endl;
+        std::vector<uint32_t> partialTable(input_table.size());
+        uint32_t mask = (1<<logDim[i]) - 1;
+        mask <<= nShift;
+        for (size_t j = 0; j < input_table.size(); j++){
+            partialTable[j] = (input_table[j] & mask) >> (nShift);
+            // std::cout << partialTable[j] << "(" << invsbox[j] << ",  " << mask << ", " <<  (nShift)<< ") ";
+        }
+        // std::cout << std::endl;
+        FindLUTPoly3DAsymmetric(partialTable, logDim, logDim[i], coeffs3D[i]);
+        nShift += logDim[i];
+    }
+
+    // Create the crypto context
+    CryptoContext<DCRTPoly> cc;
+    uint32_t maxDepth = presetCryptoContextBootstrap(cc);
+
+    auto keys = cc->KeyGen();
+    uint32_t numSlots = 1 << 15;
+
+    std::cout << "Generating keys ..." << std::endl;
+    cc->EvalMultKeyGen(keys.secretKey);
+    cc->EvalConjugateKeyGen(keys.secretKey);
+    // cc->EvalBootstrapKeyGen(keys.secretKey, numSlots);
+    std::cout << "Keys generated." << std::endl;
+
+    // Encode coeffs
+    std::vector<std::vector<std::vector<std::vector<Plaintext>>>> coeffsPt(outB);
+    for (size_t u = 0; u < outB; u++){
+        coeffsPt[u].resize(coeffs3D[u].size());
+        for (size_t i = 0; i < coeffs3D[0].size(); i++){
+            coeffsPt[u][i].resize(coeffs3D[u][i].size());
+            for (size_t j = 0; j < coeffs3D[u][i].size(); j++){
+                coeffsPt[u][i][j].resize(coeffs3D[u][i][j].size());
+                for (size_t k = 0; k < coeffs3D[u][i][j].size(); k++){
+                    coeffsPt[u][i][j][k] = cc->MakeCKKSPackedPlaintext(std::vector<std::complex<double>>(numSlots, coeffs3D[u][i][j][k]), 1, maxDepth - 3);
+                }
+            }
+        }
+    }
+
+    std::vector<std::vector<uint32_t>> mInt(outB);
+    nShift = 0;
+    for (size_t i = 0; i < outB; i++){
+        mInt[i].resize(numSlots);
+        uint32_t mask = (1<<logDim[i]) - 1;
+        mask <<= nShift;
+        for (size_t j = 0; j < numSlots; j++){
+            uint32_t input = j % (1 << inputLen); // input range is 2^inputLen
+            mInt[i][j] = (input & mask) >> (nShift);
+        }
+        nShift += logDim[i];
+    }
+    
+    std::vector<std::vector<std::complex<double>>> mComplex(3);
+    for (size_t i = 0; i < outB; i++) {
+        GetExponent(mInt[i], logDim[i], mComplex[i]);
+    }
+
+    uint32_t initLevel = 5;
+
+    std::vector<Plaintext> ptxts(outB);
+    std::vector<Ciphertext<DCRTPoly>> ctxts(outB);
+    for (size_t i = 0; i < outB; i++){
+        ptxts[i] = cc->MakeCKKSPackedPlaintext(mComplex[i], 1, maxDepth - initLevel);
+        ctxts[i] = cc->Encrypt(keys.publicKey, ptxts[i]);
+    }
+
+    auto b_start = std::chrono::high_resolution_clock::now();
+
+    // for (size_t i = 0; i < outB; i++){
+    //     ctxts[i] = cc->EvalBootstrap(ctxts[i]);
+    // }
+
+    auto b_end = std::chrono::high_resolution_clock::now();
+    auto b_duration = std::chrono::duration_cast<std::chrono::milliseconds>(b_end - b_start);
+    std::cout << "Time taken (boot 3 times): " << std::dec << b_duration.count() << " ms" << std::endl;
+    
+    std::vector<Ciphertext<DCRTPoly>> ctxtout;
+
+    // Evaluate the LUT and measure the time
+    auto start = std::chrono::high_resolution_clock::now();
+
+    // EvalLUTs3DAsymmetric(ctxts, logDim, coeffsPt, ctxtout);
+    EvalLUTs3DAsymmetricDepthFirst(ctxts, logDim, coeffsPt, ctxtout);
+
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    std::cout << "Time taken (" << logDim[0] << "+" << logDim[1] << ")-to-(" << logDim[0] << "+" << logDim[1] << ") LUT): " << std::dec << duration.count() << " ms" << std::endl;
+
+    std::vector<Plaintext> result(outB);
+    for (size_t i = 0; i < outB; i++){
+        cc->Decrypt(keys.secretKey, ctxtout[i], &(result[i]));
+    }
+
+    std::vector<std::vector<int>> intResult(outB);
+    for (size_t i = 0; i < outB; i++){
+        std::vector<std::complex<double>> complexResult = result[i]->GetCKKSPackedValue();
+        intResult[i] = GetLog(complexResult, logDim[i]);
+    }
+
+    std::cout << "Output table: \n====================\n";
+    std::cout << "In(L)\tIn(M)\tIn(R)\tMerged\t|Out(L)\tOut(M)\tOut(R)\tMerged\tExpected\n";
+    std::cout << std::hex;
+    for (size_t i = 0; i < 8; i++){
+        std::cout << mInt[2][i] << "\t" << mInt[1][i] << "\t" << mInt[0][i] << "\t" 
+                    << mInt[2][i]*(1<<logDim[1])*(1<<logDim[0]) + mInt[1][i]*(1<<logDim[0]) + mInt[0][i] << "\t|" 
+                    << intResult[2][i] << "\t"  << intResult[1][i] << "\t" << intResult[0][i] << "\t" 
+                    << intResult[2][i]*(1<<logDim[1])*(1<<logDim[0]) + intResult[1][i]*(1<<logDim[0]) + intResult[0][i] << "\t" 
+                    << input_table[mInt[2][i]*(1<<logDim[1])*(1<<logDim[0]) + mInt[1][i]*(1<<logDim[0]) + mInt[0][i]]<< std::endl;
+    }
+
+    std::vector<std::vector<uint32_t>> expected(outB);
+    nShift = 0;
+    for (size_t i = 0; i < outB; i++){
+        expected[i].resize(numSlots);
+        uint32_t mask = (1<<logDim[i]) - 1;
+        mask <<= nShift;
+        for (size_t j = 0; j < numSlots; j++){
+            expected[i][j] = (input_table[j % (input_table.size())] & mask) >> (nShift);
+        }
+        nShift += logDim[i];
+    }
+
+    std::cout << "Int and complex value table\n================================" << std::endl;
+    std::cout << "Enced(int)\tEnced\tExpect(int)\tExpect" << std::endl;
+    for (size_t i = 0; i < 8; i++){
+        std::cout << intResult[0][i] << "\t" << result[0]->GetCKKSPackedValue()[i] << "\t";
+        // calculate and print exp(-2*pi* i / 16 *expected[0][i])
+        std::cout << expected[0][i] << "\t" << std::exp(std::complex<double>(0, -2 * M_PI * expected[0][i] / (1 << logDim[0]))) << std::endl;
+    }
+
+    std::cout << "Noise variance is: ";
+    double variance = 0.;
+    for (size_t i = 0; i < numSlots; i++){
+        // variance of noise, noise: result[0]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * expected[0][i] / 16))
+        variance += std::norm(result[0]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * (int)expected[0][i] / (1 << logDim[0]))));
+        variance += std::norm(result[1]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * (int)expected[1][i] / (1 << logDim[1]))));
+        variance += std::norm(result[2]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * (int)expected[2][i] / (1 << logDim[2]))));
+    }
+    std::cout << variance / (3*numSlots) << std::endl;
 }
 
 void testExponent(){
