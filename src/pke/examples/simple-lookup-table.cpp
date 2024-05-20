@@ -78,9 +78,6 @@ void testLUTANtoBNAsymmetric();
 void testLUT3NtoBNAsymmetric();
 
 void testFFT();
-void testExponent();
-void testComplexOperation();
-void testLog();
 
 int main() {
     // testLUTNtoN();
@@ -88,7 +85,6 @@ int main() {
     // testLUTANtoBN();
     // testLUTANtoBNAsymmetric();
     testLUT3NtoBNAsymmetric();
-    // testLog();
 
     return 0;
 }
@@ -1375,23 +1371,4 @@ void testLUT3NtoBNAsymmetric(){
         variance += std::norm(result[2]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * (int)expected[2][i] / (1 << logDim[2]))));
     }
     std::cout << variance / (3*numSlots) << std::endl;
-}
-
-void testExponent(){
-    std::vector<uint32_t> mInt = {0,1,2,3,4,5,6,7};
-    std::vector<std::complex<double>> mComplex;
-    GetExponent(mInt, 3, mComplex);
-    auto mInt2 = GetLog(mComplex, 3);
-    for (size_t i = 0; i < mInt.size(); i++){
-        std::cout << mInt[i] << " " << mComplex[i] << " "  << mInt2[i] << std::endl;
-    }
-}
-
-void testLog(){
-    // make some vector of complex numbner (size 4) and test getLog
-    std::vector<std::complex<double>> mComplex = {std::complex<double>(0.000110165,0.999442), std::complex<double>(0, 1), std::complex<double>(-1, 0), std::complex<double>(0, -1)};
-    auto mInt = GetLog(mComplex, 2);
-    for (size_t i = 0; i < mComplex.size(); i++){
-        std::cout << mComplex[i] << " " << mInt[i] << std::endl;
-    }
 }
