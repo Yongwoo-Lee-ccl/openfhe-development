@@ -558,6 +558,15 @@ void EvalLUTs3DAsymmetricDepthFirst(std::vector<Ciphertext<DCRTPoly>> &ct,
         }
     }
 
+    // precompute ct_ij for fast evaluation of multiple LUTs
+    std::vector<std::vector<Ciphertext<DCRTPoly>>> cross_term_precomp(codedim[2] - 1);
+    for (size_t i = 1; i < codedim[2]; i++){
+        cross_term_precomp[i-1].resize(codedim[1] - 1);
+        for (size_t j = 1; j < codedim[1]; j++){
+            cross_term_precomp[i-1][j-1] = cc->EvalMult(b[2][i - 1], b[1][j - 1]);
+        }
+    }    
+
     // evaluate the polynomial
     for (auto &table : coeffs){
         // inner product with coefficients
@@ -583,7 +592,8 @@ void EvalLUTs3DAsymmetricDepthFirst(std::vector<Ciphertext<DCRTPoly>> &ct,
                 } else if (j == 0) {
                     ct_ij = b[2][i - 1];
                 } else{
-                    ct_ij = cc->EvalMult(b[2][i - 1], b[1][j - 1]);
+                    ct_ij = cross_term_precomp[i-1][j-1];
+                    // ct_ij = cc->EvalMult(b[2][i - 1], b[1][j - 1]);
                 }
 
                 tableEval = cc->EvalAdd(tableEval, cc->EvalMult(rowEval, ct_ij));
@@ -1201,7 +1211,7 @@ void testLUTANtoBNAsymmetric(){
 void testLUT3NtoBNAsymmetric(){
     size_t outB = 3; 
 
-    std::vector<size_t> logDim = {3, 3, 3}; // size of outB, input and output has same size.
+    std::vector<size_t> logDim = {4, 4, 4}; // size of outB, input and output has same size.
 
     size_t inputLen = 0;
     for (auto &n : logDim){
@@ -1318,7 +1328,16 @@ void testLUT3NtoBNAsymmetric(){
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    std::cout << "Time taken (" << logDim[0] << "+" << logDim[1] << ")-to-(" << logDim[0] << "+" << logDim[1] << ") LUT): " << std::dec << duration.count() << " ms" << std::endl;
+    std::cout << "Time taken (";
+    for (size_t i = 0; i < logDim.size(); i++){
+       std::cout << logDim[i] << ",";
+    }
+    std::cout << ")-to-(";
+    for (size_t i = 0; i < logDim.size(); i++){
+       std::cout << logDim[i] << ",";
+    }
+    std::cout <<  ") LUT): ";
+    std::cout << std::dec << duration.count() << " ms" << std::endl;
 
     std::vector<Plaintext> result(outB);
     for (size_t i = 0; i < outB; i++){
