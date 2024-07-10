@@ -242,8 +242,9 @@ void FindLUTPoly2DAsymmetric(std::vector<uint32_t> table, size_t logDim0, size_t
     ifft2(coeff);
 }
 
-void FindLUTPoly3DAsymmetric(std::vector<uint32_t> table, std::vector<size_t> logDim, size_t logDimOut, 
-                   std::vector<std::vector<std::vector<std::complex<double>>>> &coeff){
+void FindLUTPoly3DAsymmetric(std::vector<uint32_t> table, std::vector<size_t> logDim, 
+        size_t logDimOut, 
+        std::vector<std::vector<std::vector<std::complex<double>>>> &coeff){
     std::vector<size_t> codedim(3);
     for (size_t i = 0; i < 3; i++){
         codedim[i] = 1 << logDim[i];
@@ -1209,25 +1210,37 @@ void testLUTANtoBNAsymmetric(){
 }
 
 void testLUT3NtoBNAsymmetric(){
-    size_t outB = 3; 
+    size_t outB = 4; 
 
     std::vector<size_t> logDim = {4, 4, 4}; // size of outB, input and output has same size.
+    std::vector<size_t> logDimOut = {4, 4, 4, 4, 4};
 
     size_t inputLen = 0;
     for (auto &n : logDim){
        inputLen += n; 
     }
+
+    size_t outputLen = 0;
+    for (auto &n : logDimOut){
+       outputLen += n; 
+    }
+
     std::cout << "inputLen: " << inputLen << "\n";
     
     std::cout << "Test 3n-to-3n LUT, Asymmetric with (" << logDim[0] << ", " << logDim[1] << ", " << logDim[2] << ") bits inputs" << std::endl;
-
+    std::cout << "output size: (";
+    for (auto &n : logDimOut){
+       std::cout << n << ",";
+    }
+    std::cout << ")\n";
+    
     std::cout << "Input table: \n====================\n";
     // Note: put any 2logDim-to-2logDim table you want to test here 
     std::vector<uint32_t> input_table(1<<inputLen);
 
     for (size_t i = 0; i < 1<<inputLen; i++){ // put any cool table you want
-        // mod 5
-        input_table[i] = i % 5;
+        // i^2 + i + 1
+        input_table[i] = (i*i + i + 1)%(1<<outputLen);
     }
 
     std::cout << std::hex;
@@ -1236,21 +1249,18 @@ void testLUT3NtoBNAsymmetric(){
     }
     std::cout << "..." << std::endl << std::endl;
 
-    std::vector<std::vector<std::vector<std::vector<std::complex<double>>>>> coeffs3D(3);
+    std::vector<std::vector<std::vector<std::vector<std::complex<double>>>>> coeffs3D(outB);
     // divide tables by chunks of size logDim-bit
     size_t nShift = 0; 
     for (size_t i = 0; i < outB; i++){
-        // std::cout << "Coeffs(int) for output " << i << std::endl;
         std::vector<uint32_t> partialTable(input_table.size());
-        uint32_t mask = (1<<logDim[i]) - 1;
+        uint32_t mask = (1<<logDimOut[i]) - 1;
         mask <<= nShift;
         for (size_t j = 0; j < input_table.size(); j++){
             partialTable[j] = (input_table[j] & mask) >> (nShift);
-            // std::cout << partialTable[j] << "(" << invsbox[j] << ",  " << mask << ", " <<  (nShift)<< ") ";
         }
-        // std::cout << std::endl;
-        FindLUTPoly3DAsymmetric(partialTable, logDim, logDim[i], coeffs3D[i]);
-        nShift += logDim[i];
+        FindLUTPoly3DAsymmetric(partialTable, logDim, logDimOut[i], coeffs3D[i]);
+        nShift += logDimOut[i];
     }
 
     // Create the crypto context
@@ -1281,9 +1291,9 @@ void testLUT3NtoBNAsymmetric(){
         }
     }
 
-    std::vector<std::vector<uint32_t>> mInt(outB);
+    std::vector<std::vector<uint32_t>> mInt(3);
     nShift = 0;
-    for (size_t i = 0; i < outB; i++){
+    for (size_t i = 0; i < 3; i++){
         mInt[i].resize(numSlots);
         uint32_t mask = (1<<logDim[i]) - 1;
         mask <<= nShift;
@@ -1295,15 +1305,15 @@ void testLUT3NtoBNAsymmetric(){
     }
     
     std::vector<std::vector<std::complex<double>>> mComplex(3);
-    for (size_t i = 0; i < outB; i++) {
+    for (size_t i = 0; i < 3; i++) {
         GetExponent(mInt[i], logDim[i], mComplex[i]);
     }
 
     uint32_t initLevel = 5;
 
     std::vector<Plaintext> ptxts(outB);
-    std::vector<Ciphertext<DCRTPoly>> ctxts(outB);
-    for (size_t i = 0; i < outB; i++){
+    std::vector<Ciphertext<DCRTPoly>> ctxts(3);
+    for (size_t i = 0; i < 3; i++){
         ptxts[i] = cc->MakeCKKSPackedPlaintext(mComplex[i], 1, maxDepth - initLevel);
         ctxts[i] = cc->Encrypt(keys.publicKey, ptxts[i]);
     }
@@ -1333,8 +1343,8 @@ void testLUT3NtoBNAsymmetric(){
        std::cout << logDim[i] << ",";
     }
     std::cout << ")-to-(";
-    for (size_t i = 0; i < logDim.size(); i++){
-       std::cout << logDim[i] << ",";
+    for (size_t i = 0; i < logDimOut.size(); i++){
+       std::cout << logDimOut[i] << ",";
     }
     std::cout <<  ") LUT): ";
     std::cout << std::dec << duration.count() << " ms" << std::endl;
@@ -1347,30 +1357,19 @@ void testLUT3NtoBNAsymmetric(){
     std::vector<std::vector<int>> intResult(outB);
     for (size_t i = 0; i < outB; i++){
         std::vector<std::complex<double>> complexResult = result[i]->GetCKKSPackedValue();
-        intResult[i] = GetLog(complexResult, logDim[i]);
-    }
-
-    std::cout << "Output table: \n====================\n";
-    std::cout << "In(L)\tIn(M)\tIn(R)\tMerged\t|Out(L)\tOut(M)\tOut(R)\tMerged\tExpected\n";
-    std::cout << std::hex;
-    for (size_t i = 0; i < 8; i++){
-        std::cout << mInt[2][i] << "\t" << mInt[1][i] << "\t" << mInt[0][i] << "\t" 
-                    << mInt[2][i]*(1<<logDim[1])*(1<<logDim[0]) + mInt[1][i]*(1<<logDim[0]) + mInt[0][i] << "\t|" 
-                    << intResult[2][i] << "\t"  << intResult[1][i] << "\t" << intResult[0][i] << "\t" 
-                    << intResult[2][i]*(1<<logDim[1])*(1<<logDim[0]) + intResult[1][i]*(1<<logDim[0]) + intResult[0][i] << "\t" 
-                    << input_table[mInt[2][i]*(1<<logDim[1])*(1<<logDim[0]) + mInt[1][i]*(1<<logDim[0]) + mInt[0][i]]<< std::endl;
+        intResult[i] = GetLog(complexResult, logDimOut[i]);
     }
 
     std::vector<std::vector<uint32_t>> expected(outB);
     nShift = 0;
     for (size_t i = 0; i < outB; i++){
         expected[i].resize(numSlots);
-        uint32_t mask = (1<<logDim[i]) - 1;
+        uint32_t mask = (1<<logDimOut[i]) - 1;
         mask <<= nShift;
         for (size_t j = 0; j < numSlots; j++){
             expected[i][j] = (input_table[j % (input_table.size())] & mask) >> (nShift);
         }
-        nShift += logDim[i];
+        nShift += logDimOut[i];
     }
 
     std::cout << "Int and complex value table\n================================" << std::endl;
@@ -1378,16 +1377,21 @@ void testLUT3NtoBNAsymmetric(){
     for (size_t i = 0; i < 8; i++){
         std::cout << intResult[0][i] << "\t" << result[0]->GetCKKSPackedValue()[i] << "\t";
         // calculate and print exp(-2*pi* i / 16 *expected[0][i])
-        std::cout << expected[0][i] << "\t" << std::exp(std::complex<double>(0, -2 * M_PI * expected[0][i] / (1 << logDim[0]))) << std::endl;
+        std::cout << expected[0][i] << "\t" << std::exp(std::complex<double>(0, -2 * M_PI * expected[0][i] / (1 << logDimOut[0]))) << std::endl;
     }
 
     std::cout << "Noise variance is: ";
     double variance = 0.;
     for (size_t i = 0; i < numSlots; i++){
-        // variance of noise, noise: result[0]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * expected[0][i] / 16))
-        variance += std::norm(result[0]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * (int)expected[0][i] / (1 << logDim[0]))));
-        variance += std::norm(result[1]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * (int)expected[1][i] / (1 << logDim[1]))));
-        variance += std::norm(result[2]->GetCKKSPackedValue()[i] - std::exp(std::complex<double>(0, -2 * M_PI * (int)expected[2][i] / (1 << logDim[2]))));
+        for (size_t j = 0; j < outB; j++)
+        {
+           variance += std::norm(
+                result[j]->GetCKKSPackedValue()[i] 
+                - std::exp(
+                    std::complex<double>(0, -2 * M_PI * (int)expected[j][i] / (1 << logDimOut[j]))
+                    )
+                );
+        }
     }
     std::cout << variance / (3*numSlots) << std::endl;
 }
