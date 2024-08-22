@@ -48,22 +48,25 @@ RingGSWACCKey RingGSWAccumulatorLMKCDEY::KeyGenAcc(const std::shared_ptr<RingGSW
     // dim2, 0: for RGSW(X^si), 1: for automorphism keys
     // only w automorphism keys required
     // allocates (n - w) more memory for pointer (not critical for performance)
-    RingGSWACCKey ek = std::make_shared<RingGSWACCKeyImpl>(1, 2, n);
+    RingGSWACCKey ek = std::make_shared<RingGSWACCKeyImpl>(1, 3, n);
 
 #pragma omp parallel for num_threads(OpenFHEParallelControls.GetThreadLimit(n))
     for (size_t i = 0; i < n; ++i) {
         auto s{sv[i].ConvertToInt<int32_t>()};
+        // positive key
         (*ek)[0][0][i] = KeyGenLMKCDEY(params, skNTT, s > modHalf ? s - mod : s);
+        // negative key
+        (*ek)[0][1][i] = KeyGenLMKCDEY(params, skNTT, s > modHalf ? mod - s : -s);
     }
 
     NativeInteger gen = NativeInteger(5);
 
-    (*ek)[0][1][0] = KeyGenAuto(params, skNTT, 2 * N - gen.ConvertToInt());
+    (*ek)[0][2][0] = KeyGenAuto(params, skNTT, 2 * N - gen.ConvertToInt());
 
     // m_window: window size, consider parameterization in the future
 #pragma omp parallel for num_threads(OpenFHEParallelControls.GetThreadLimit(numAutoKeys))
     for (uint32_t i = 1; i <= numAutoKeys; ++i)
-        (*ek)[0][1][i] = KeyGenAuto(params, skNTT, gen.ModExp(i, 2 * N).ConvertToInt<LWEPlaintext>());
+        (*ek)[0][2][i] = KeyGenAuto(params, skNTT, gen.ModExp(i, 2 * N).ConvertToInt<LWEPlaintext>());
     return ek;
 }
 
@@ -96,63 +99,50 @@ void RingGSWAccumulatorLMKCDEY::EvalAcc(const std::shared_ptr<RingGSWCryptoParam
     NativeInteger gen(5);
     uint32_t genInt       = 5;
     uint32_t nSkips       = 0;
-    acc->GetElements()[1] = (acc->GetElements()[1]).AutomorphismTransform(M - genInt);
+    acc->GetElements()[1] = (acc->GetElements()[1]).AutomorphismTransform(genInt);
 
-    // for a_j = -5^i
+    // for a_j = +5^i and -5^i
     for (uint32_t i = Nh - 1; i > 0; i--) {
-        if (permuteMap.find(-i) != permuteMap.end()) {
+        if ((permuteMap.find(i) != permuteMap.end()) || (permuteMap.find(-i) != permuteMap.end())) {
             if (nSkips != 0) {  // Rotation by 5^nSkips
-                Automorphism(params, gen.ModExp(nSkips, M), (*ek)[0][1][nSkips], acc);
+                Automorphism(params, gen.ModExp(nSkips, M), (*ek)[0][2][nSkips], acc);
                 nSkips = 0;
             }
-            auto& indexVec = permuteMap[-i];
-            for (size_t j = 0; j < indexVec.size(); j++) {
-                AddToAccLMKCDEY(params, (*ek)[0][0][indexVec[j]], acc);
+            // loop for positives
+            if (permuteMap.find(i) != permuteMap.end()){
+                auto& indexVec = permuteMap[i];
+                for (size_t j = 0; j < indexVec.size(); j++) {
+                    AddToAccLMKCDEY(params, (*ek)[0][0][indexVec[j]], acc);
+                }
+            }
+            // loop for negatives
+            if (permuteMap.find(-i) != permuteMap.end()){
+                auto& indexVec = permuteMap[-i];
+                for (size_t j = 0; j < indexVec.size(); j++) {
+                    AddToAccLMKCDEY(params, (*ek)[0][1][indexVec[j]], acc);
+                }
             }
         }
         nSkips++;
 
         if (nSkips == numAutoKeys || i == 1) {
-            Automorphism(params, gen.ModExp(nSkips, M), (*ek)[0][1][nSkips], acc);
+            Automorphism(params, gen.ModExp(nSkips, M), (*ek)[0][2][nSkips], acc);
             nSkips = 0;
         }
     }
 
-    // for -1
-    if (permuteMap.find(M) != permuteMap.end()) {
-        auto& indexVec = permuteMap[M];
-        for (size_t j = 0; j < indexVec.size(); j++) {
-            AddToAccLMKCDEY(params, (*ek)[0][0][indexVec[j]], acc);
-        }
-    }
-
-    Automorphism(params, NativeInteger(M - genInt), (*ek)[0][1][0], acc);
-    // for a_j = 5^i
-    for (size_t i = Nh - 1; i > 0; i--) {
-        if (permuteMap.find(i) != permuteMap.end()) {
-            if (nSkips != 0) {  // Rotation by 5^nSkips
-                Automorphism(params, gen.ModExp(nSkips, M), (*ek)[0][1][nSkips], acc);
-                nSkips = 0;
-            }
-
-            auto& indexVec = permuteMap[i];
-            for (size_t j = 0; j < indexVec.size(); j++) {
-                AddToAccLMKCDEY(params, (*ek)[0][0][indexVec[j]], acc);
-            }
-        }
-        nSkips++;
-
-        if (nSkips == numAutoKeys || i == 1) {
-            Automorphism(params, gen.ModExp(nSkips, M), (*ek)[0][1][nSkips], acc);
-            nSkips = 0;
-        }
-    }
-
-    // for 0
+    // for 5^0
     if (permuteMap.find(0) != permuteMap.end()) {
         auto& indexVec = permuteMap[0];
         for (size_t j = 0; j < indexVec.size(); j++) {
             AddToAccLMKCDEY(params, (*ek)[0][0][indexVec[j]], acc);
+        }
+    }
+    // for -5^0
+    if (permuteMap.find(M) != permuteMap.end()) {
+        auto& indexVec = permuteMap[M];
+        for (size_t j = 0; j < indexVec.size(); j++) {
+            AddToAccLMKCDEY(params, (*ek)[0][1][indexVec[j]], acc);
         }
     }
 }
